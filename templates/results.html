@@ -16,22 +16,23 @@
       <input type="submit">
     </form>
     <h2>Abbreviated report</h2>
-    {% for k1, v1 in records.items() %}
-      <b>{{ k1 }}:</b>
-      {% for k2, v2 in v1.items() %}
-        {{ k2 }}
-        {% for d in v2 %}
+    <p>Number of species observed: {{num_species}}.</p>
+    {% for species in records %}
+      <b>{{ species[0] }}:</b>
+      {% for k, v in species[1].items() %}
+        {{ k }}
+        {% for d in v %}
           {% if (d.count != "1") %}{{ d.count }}{% endif %} {{ d.date }}
         {% endfor %}
       {% endfor %}
     <br>
     {% endfor %}
     <h2>Expanded report</h2>
-    {% for k1, v1 in records.items() %}
-    <b>{{ k1 }}:</b><br>
-    {% for k2, v2 in v1.items() %}
-      {{ k2 }}:<br>
-      {% for d in v2 %}
+    {% for species in records %}
+    <b>{{ species[0] }}:</b><br>
+    {% for k, v in species[1].items() %}
+      {{ k }}:<br>
+      {% for d in v %}
         {{d.date}} {{d.time}} {{d.count}} {{d.observer}} {{d.notes}}<br>
       {% endfor %}
     {% endfor %}

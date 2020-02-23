@@ -53,8 +53,11 @@ def add_day(rows): # 'rows' contains the <tr> tags from the table
             if (i%2) == 1: # odd numbered row
                 # it's a main row, with bird details
                 d = short_date(data[0].get_text()) # sighting date
-                species = data[1].get_text()
-                print(species, birdlist[species.upper()])
+                species = data[1].get_text().strip()
+                if species not in birdlist:
+                    app.logger.info('adding unknown bird %s to birdlist', species)
+                    birdlist.insert(0,species)
+                # print(species, birdlist[species.upper()])
                 site = data[2].get_text()
                 count = data[3].get_text()
                 observer = data[4].get_text()
@@ -63,7 +66,7 @@ def add_day(rows): # 'rows' contains the <tr> tags from the table
                 notes = data[1].get_text()
 
                 # after processing even row, add a record with all the data from this pair of rows
-                app.logger.info('adding: %s for: %s', species, d)
+                # app.logger.info('adding: %s for: %s', species, d)
                 if records.get(species) == None:
                     records[species]={}
                 if records[species].get(site) == None:
@@ -97,6 +100,15 @@ def results():
     while d <= todate:
         add_day(fetch_day(d))
         d = d + timedelta(days=1)
+    app.logger.info('Number of species recorded: %d', len(records))
+
+    # order the records in taxonomic order
+    taxonomic = []
+    for species in birdlist:
+        if species in records:  # This species has been sighted, add it to our taxonomic list
+            taxonomic.append((species, records[species]))
+
+    app.logger.info('Number of species in taxonomic list: %d', len(taxonomic))
 
     # present results
     # for sp in records:
@@ -108,7 +120,12 @@ def results():
     #                     sighting["date"],
     #                     sighting["time"],
     #                     sighting["count"])
-    return render_template('results.html', records=records, fromdate=fromdate_str, todate=todate_str)
+    return render_template(
+        'results.html', 
+        records=taxonomic, 
+        num_species=len(records),
+        fromdate=fromdate_str, 
+        todate=todate_str)
 
 if __name__ == '__main__':   
     app.run(debug=True)
