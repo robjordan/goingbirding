@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang=”en”>
+  <head>
+    <meta charset=”UTF-8">
+    <meta name=”viewport” content=”width=device-width, initial-scale=1.0">
+    <meta http-equiv=”X-UA-Compatible” content=”ie=edge”>
+    <title>Scraper for goingbirding.co.uk</title>
+  </head>
+  <body>
+    <h1>Results for Hampshire sightings from Goingbirding</h1>
+    <form action="/search">
+      <label for="fromdate">From: </label>
+      <input type="date" id="fromdate" name="fromdate" value="{{ fromdate }}">
+      <label for="todate">To: </label>
+      <input type="date" id="todate" name="todate" value="{{ todate }}">
+      <input type="submit">
+    </form>
+    <h2>Abbreviated report</h2>
+    {% for k1, v1 in records.items() %}
+      <b>{{ k1 }}:</b>
+      {% for k2, v2 in v1.items() %}
+        {{ k2 }}
+        {% for d in v2 %}
+          {% if (d.count != "1") %}{{ d.count }}{% endif %} {{ d.date }}
+        {% endfor %}
+      {% endfor %}
+    <br>
+    {% endfor %}
+    <h2>Expanded report</h2>
+    {% for k1, v1 in records.items() %}
+    <b>{{ k1 }}:</b><br>
+    {% for k2, v2 in v1.items() %}
+      {{ k2 }}:<br>
+      {% for d in v2 %}
+        {{d.date}} {{d.time}} {{d.count}} {{d.observer}} {{d.notes}}<br>
+      {% endfor %}
+    {% endfor %}
+  <br>
+  {% endfor %}
+  </body>
+</html>
+
