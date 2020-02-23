@@ -4,11 +4,17 @@
     <meta charset=”UTF-8">
     <meta name=”viewport” content=”width=device-width, initial-scale=1.0">
     <meta http-equiv=”X-UA-Compatible” content=”ie=edge”>
-    <title>Webscraper in Python using Flask</title>
+    <title>Scraper for goingbirding.co.uk</title>
   </head>
   <body>
-    <h1>heading</h1>
-    <p>{{ text }}</p>
+    <h1>Search for Hampshire sightings from Goingbirding</h1>
+    <form action="/search">
+      <label for="fromdate">From: </label>
+      <input type="date" id="fromdate" name="fromdate" value="{{ fromdate }}">
+      <label for="todate">To: </label>
+      <input type="date" id="todate" name="todate" value="{{ todate }}">
+      <input type="submit">
+    </form>
   </body>
 </html>
 
