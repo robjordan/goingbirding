@@ -7,18 +7,24 @@ from flask import request
 import time
 from datetime import date, datetime, timedelta
 from birdlist import birdlist
+import google.cloud.logging
+import logging
 
+# globals
 records = {}
 cache = {}
 cache_ttl = 3600 # seconds
+
 
 def fetch_day(d):  # day is a datetime date
     d = d.strftime("%Y-%m-%d")
     url = "https://www.goingbirding.co.uk/hants/birdnews.asp?date_search=8&date={}&sort=2&status_id=8".format(d)
     if cache.get(d) == None or cache[d]["expires"] < datetime.now():
+        #logger.log_text("INFO: " + url)
         app.logger.info(url)
         page=requests.get(url)
         if page.status_code != 200:
+            #logger.log_text("ERROR: fetch error, http response: {}".format(page.status_code))
             app.logger.error('fetch error, http response: %d', page.status_code)
             return None
         soup = BeautifulSoup(page.content, 'html.parser')
@@ -26,6 +32,7 @@ def fetch_day(d):  # day is a datetime date
         cache[d]["rows"] = soup.select('tr')
         cache[d]["expires"] = datetime.now() + timedelta(seconds=cache_ttl)
     else:    
+        #logger.log_text("INFO: " + d + "from cache")
         app.logger.info('%s from cache', d)
     return cache[d]["rows"]
     
@@ -55,6 +62,7 @@ def add_day(rows): # 'rows' contains the <tr> tags from the table
                 d = short_date(data[0].get_text()) # sighting date
                 species = data[1].get_text().strip()
                 if species not in birdlist:
+                    # logger.log_text("INFO: adding unknown bird %s to birdlist: " + species) 
                     app.logger.info('adding unknown bird %s to birdlist', species)
                     birdlist.insert(0,species)
                 # print(species, birdlist[species.upper()])
@@ -91,6 +99,13 @@ def index():
 
 @app.route('/search', methods=['GET', 'POST'])
 def results():
+    # set up logging to Google cloud Stackdriver
+    client = google.cloud.logging.Client()
+    # Connects the logger to the root logging handler; by default this captures
+    # all logs at INFO level and higher
+    client.setup_logging()
+    logging.warn('logging enabled')
+
     records.clear()
     fromdate_str = request.args.get('fromdate')
     todate_str = request.args.get('todate')
@@ -100,6 +115,7 @@ def results():
     while d <= todate:
         add_day(fetch_day(d))
         d = d + timedelta(days=1)
+    # logger.log_text("INFO: Number of species recorded: {}".format(len(records)))
     app.logger.info('Number of species recorded: %d', len(records))
 
     # order the records in taxonomic order
@@ -108,6 +124,7 @@ def results():
         if species in records:  # This species has been sighted, add it to our taxonomic list
             taxonomic.append((species, records[species]))
 
+    # logger.log_text("INFO: Number of species recorded: {}".format(len(taxonomic)))
     app.logger.info('Number of species in taxonomic list: %d', len(taxonomic))
 
     # present results
@@ -127,6 +144,7 @@ def results():
         fromdate=fromdate_str, 
         todate=todate_str)
 
-if __name__ == '__main__':   
+
+if __name__ == '__main__':  
     app.run(debug=True)
 
