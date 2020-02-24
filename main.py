@@ -5,43 +5,55 @@ from flask import Flask
 from flask import render_template
 from flask import request
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from birdlist import birdlist
 import google.cloud.logging
 import logging
+from google.cloud import datastore
+import pickle
 
 # globals
-records = {}
-cache = {}
-cache_ttl = 3600 # seconds
+cache_ttl = 7200 # seconds
 
 
-def fetch_day(d):  # day is a datetime date
+def fetch_day(d, ds_client):  # day is a datetime date
     d = d.strftime("%Y-%m-%d")
     url = "https://www.goingbirding.co.uk/hants/birdnews.asp?date_search=8&date={}&sort=2&status_id=8".format(d)
-    if cache.get(d) == None or cache[d]["expires"] < datetime.now():
-        #logger.log_text("INFO: " + url)
+
+    key = ds_client.key('DaySightings', d)
+    cache_entry = ds_client.get(key)
+
+    if cache_entry == None or cache_entry['expires'] < datetime.now(timezone.utc):
+        # not cached or expired, create/update cache entry for this date
         app.logger.info(url)
         page=requests.get(url)
         if page.status_code != 200:
-            #logger.log_text("ERROR: fetch error, http response: {}".format(page.status_code))
             app.logger.error('fetch error, http response: %d', page.status_code)
             return None
-        soup = BeautifulSoup(page.content, 'html.parser')
-        cache[d] = {}
-        cache[d]["rows"] = soup.select('tr')
-        cache[d]["expires"] = datetime.now() + timedelta(seconds=cache_ttl)
-    else:    
-        #logger.log_text("INFO: " + d + "from cache")
+        expires = datetime.now(timezone.utc) + timedelta(seconds=cache_ttl)
+        sightings = parse_html(page.content)
+
+        cache_entry = datastore.Entity(key=key, exclude_from_indexes=('sightings', 'expires'))
+        cache_entry.update({
+            'sightings': sightings,
+            'expires': expires
+        })
+        ds_client.put(cache_entry)
+
+    else: 
+        # use from cache   
         app.logger.info('%s from cache', d)
-    return cache[d]["rows"]
-    
+        sightings = cache_entry['sightings']
 
-def short_date(d):  # takes a date in form "dd/mm/yy" and returns d/m e.g. "1/12" for 1st December
-    dt = datetime.strptime(d, "%d/%m/%y")
-    return "{}/{}".format(dt.day, dt.month)
 
-def add_day(rows): # 'rows' contains the <tr> tags from the table
+    return sightings
+
+
+def parse_html(html): # takes page.content from http fetch, returns an array of sightings
+    sightings = []
+
+    soup = BeautifulSoup(html, 'html.parser')
+    rows = soup.select('tr')
     # row 0 is headers
     #
     # rows 1,3,5,7,9...
@@ -62,7 +74,6 @@ def add_day(rows): # 'rows' contains the <tr> tags from the table
                 d = short_date(data[0].get_text()) # sighting date
                 species = data[1].get_text().strip()
                 if species not in birdlist:
-                    # logger.log_text("INFO: adding unknown bird %s to birdlist: " + species) 
                     app.logger.info('adding unknown bird %s to birdlist', species)
                     birdlist.insert(0,species)
                 # print(species, birdlist[species.upper()])
@@ -72,19 +83,35 @@ def add_day(rows): # 'rows' contains the <tr> tags from the table
             else: # even numbered row
                 t = data[0].get_text() # sighting time
                 notes = data[1].get_text()
-
-                # after processing even row, add a record with all the data from this pair of rows
-                # app.logger.info('adding: %s for: %s', species, d)
-                if records.get(species) == None:
-                    records[species]={}
-                if records[species].get(site) == None:
-                    records[species][site] = []
-                records[species][site].append(
-                    {"date": d,
+                sightings.append({
+                    "site": site,
+                    "species": species,
+                    "date": d,
                     "time": t,
                     "count": count,
                     "observer": observer,
                     "notes": notes})
+    return sightings
+
+
+def short_date(d):  # takes a date in form "dd/mm/yy" and returns d/m e.g. "1/12" for 1st December
+    dt = datetime.strptime(d, "%d/%m/%y")
+    return "{}/{}".format(dt.day, dt.month)
+
+def add_day(sightings, records): # sightings is an array of dictionaries, one item per sighting
+
+    for s in sightings:
+        # app.logger.info('adding: %s for: %s', species, d)
+        if records.get(s['species']) == None:
+            records[s['species']]={}
+        if records[s['species']].get(s['site']) == None:
+            records[s['species']][s['site']] = []
+        records[s['species']][s['site']].append(
+            {"date": s['date'],
+            "time": s['time'],
+            "count": s['count'],
+            "observer": s['observer'],
+            "notes": s['notes']})
 
             
 
@@ -100,22 +127,24 @@ def index():
 @app.route('/search', methods=['GET', 'POST'])
 def results():
     # set up logging to Google cloud Stackdriver
-    client = google.cloud.logging.Client()
+    logging_client = google.cloud.logging.Client()
     # Connects the logger to the root logging handler; by default this captures
     # all logs at INFO level and higher
-    client.setup_logging()
-    logging.warn('logging enabled')
+    logging_client.setup_logging()
 
-    records.clear()
+    # set up and test access to Google Datastore
+    ds_client = datastore.Client()
+
+    records = {}
     fromdate_str = request.args.get('fromdate')
     todate_str = request.args.get('todate')
     fromdate = datetime.strptime(fromdate_str, "%Y-%m-%d")
     todate = datetime.strptime(todate_str, "%Y-%m-%d")
     d = fromdate
     while d <= todate:
-        add_day(fetch_day(d))
+        add_day(fetch_day(d, ds_client), records)
         d = d + timedelta(days=1)
-    # logger.log_text("INFO: Number of species recorded: {}".format(len(records)))
+    
     app.logger.info('Number of species recorded: %d', len(records))
 
     # order the records in taxonomic order
@@ -124,19 +153,8 @@ def results():
         if species in records:  # This species has been sighted, add it to our taxonomic list
             taxonomic.append((species, records[species]))
 
-    # logger.log_text("INFO: Number of species recorded: {}".format(len(taxonomic)))
     app.logger.info('Number of species in taxonomic list: %d', len(taxonomic))
 
-    # present results
-    # for sp in records:
-    #     print(sp) # species
-    #     for site in records[sp]:
-    #         print("  ", site)
-    #         for sighting in records[sp][site]:
-    #             print("    ",
-    #                     sighting["date"],
-    #                     sighting["time"],
-    #                     sighting["count"])
     return render_template(
         'results.html', 
         records=taxonomic, 
