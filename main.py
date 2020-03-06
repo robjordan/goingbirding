@@ -16,12 +16,12 @@ import pickle
 cache_ttl = 7200 # seconds
 
 
-def fetch_day(d, ds_client):  # day is a datetime date
+def fetch_day(d, datastore_client):  # day is a datetime date
     d = d.strftime("%Y-%m-%d")
     url = "https://www.goingbirding.co.uk/hants/birdnews.asp?date_search=8&date={}&sort=2&status_id=8".format(d)
 
-    key = ds_client.key('DaySightings', d)
-    cache_entry = ds_client.get(key)
+    key = datastore_client.key('DaySightings', d)
+    cache_entry = datastore_client.get(key)
 
     if cache_entry == None or cache_entry['expires'] < datetime.now(timezone.utc):
         # not cached or expired, create/update cache entry for this date
@@ -33,12 +33,12 @@ def fetch_day(d, ds_client):  # day is a datetime date
         expires = datetime.now(timezone.utc) + timedelta(seconds=cache_ttl)
         sightings = parse_html(page.content)
 
-        cache_entry = datastore.Entity(key=key, exclude_from_indexes=('sightings', 'expires'))
+        cache_entry = datastore.Entity(key=key, exclude_from_indexes=('sightings',))
         cache_entry.update({
             'sightings': sightings,
             'expires': expires
         })
-        ds_client.put(cache_entry)
+        datastore_client.put(cache_entry)
 
     else: 
         # use from cache   
@@ -118,9 +118,9 @@ def add_day(sightings, records): # sightings is an array of dictionaries, one it
 app = Flask(__name__)
 @app.route('/')
 def index():
-    fom = date.today().replace(day=1) # first of the month
-    lopm = fom - timedelta(days=1)
-    fopm = lopm.replace(day=1)
+    fom = date.today().replace(day=1)   # first of the month
+    lopm = fom - timedelta(days=1)      # last of previous month
+    fopm = lopm.replace(day=1)          # first of previous month
     return render_template('index.html', fromdate=fopm, todate=lopm)
 
 
@@ -133,7 +133,7 @@ def results():
     logging_client.setup_logging()
 
     # set up and test access to Google Datastore
-    ds_client = datastore.Client()
+    datastore_client = datastore.Client()
 
     records = {}
     fromdate_str = request.args.get('fromdate')
@@ -142,7 +142,7 @@ def results():
     todate = datetime.strptime(todate_str, "%Y-%m-%d")
     d = fromdate
     while d <= todate:
-        add_day(fetch_day(d, ds_client), records)
+        add_day(fetch_day(d, datastore_client), records)
         d = d + timedelta(days=1)
     
     app.logger.info('Number of species recorded: %d', len(records))
@@ -161,6 +161,27 @@ def results():
         num_species=len(records),
         fromdate=fromdate_str, 
         todate=todate_str)
+
+
+@app.route('/clean')
+def clean_cache():      # delete any expired cache entries
+    # set up and test access to Google Datastore
+    datastore_client = datastore.Client()
+
+    # construct a query to find expired cache entries
+    query = datastore_client.query(kind='DaySightings')
+    query.add_filter('expires', '<', datetime.now(timezone.utc))
+    query.order = ['expires']
+
+    # process the expired items identified by the filter
+    response = "Expiring {} cache entries\n".format(len(list(query.fetch())))
+    for entity in list(query.fetch()):
+        app.logger.info("expiring cache entry: key: {} expiry: {}".format(entity.key, entity['expires']))
+        datastore_client.delete(entity.key)
+        response = response + "{}\n".format(entity.key)
+
+    return response
+
 
 
 if __name__ == '__main__':  
